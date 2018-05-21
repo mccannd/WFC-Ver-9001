@@ -5,18 +5,29 @@ using UnityEngine;
 public class VoxelSpace : MonoBehaviour {
 
 	public GameObject phVoxel;
+	public GameObject selector;
+
+	private GameObject activeSelector;
 	public List<GameObject> phExistingVoxels;
+	private GameObject[,,] voxelsGO = new GameObject[5, 5, 5];
 
 	private Vector3Int iDims = new Vector3Int (5, 5, 5);
 	private bool[,,] voxels = new bool[5, 5, 5];
 	private Vector3 halfDims = new Vector3(2.5f, 2.5f, 2.5f);
 	private Vector3 origin = new Vector3(0, 2.5f, 0);
 
+	private Vector3Int selectIdx = new Vector3Int(-1, -1, -1);
+	private Vector3Int selectNor = new Vector3Int(-1, 0, 0);
+
+	private float lastCheckTime = 0.0f;
+
+
 	private float downTime;
 
 	// Use this for initialization
 	void Start () {
-		phExistingVoxels = new List<GameObject> ();
+		activeSelector = Instantiate(selector, idxToPos(new Vector3Int(2, -1, 2)), Quaternion.FromToRotation(new Vector3(0, 0, 1), new Vector3(0, 1, 0)));
+
 	}
 
 	private void clear() {
@@ -27,6 +38,7 @@ public class VoxelSpace : MonoBehaviour {
 			for (int y = 0; y < iDims.y; y++) {
 				for (int z = 0; z < iDims.z; z++) {
 					voxels [x, y, z] = false;
+					voxelsGO = null;
 				}
 			}
 		}
@@ -41,6 +53,7 @@ public class VoxelSpace : MonoBehaviour {
 					if (voxels [x, y, z]) {
 						Vector3 pos = idxToPos (new Vector3Int (x, y, z));
 						GameObject v = Instantiate (phVoxel, pos, new Quaternion ()) as GameObject;
+						voxelsGO [x, y, z] = v;
 						phExistingVoxels.Add (v);
 					}
 				}
@@ -95,6 +108,9 @@ public class VoxelSpace : MonoBehaviour {
 		return (tmin * r.direction) + r.origin;
 	}
 
+	private bool inBounds(Vector3Int idx) {
+		return idx.x >= 0 && idx.x < iDims.x && idx.y >= 0 && idx.y < iDims.y && idx.z >= 0 && idx.z < iDims.z;
+	}
 
 	private float bound(float s, float ds) {
 		if (ds < 0) {
@@ -106,14 +122,14 @@ public class VoxelSpace : MonoBehaviour {
 	}
 
 
-	void leftClick(ref Vector3 nor) {
+	private void mouseSelect() {
 		Ray r = Camera.main.ScreenPointToRay (Input.mousePosition);
 		Debug.Log("Ray Direction: " + r.direction.x + ", " + r.direction.y + ", " + r.direction.z);
 		bool hit = false;
 		Vector3 coll = rayBoxIntersect (r, ref hit);
 		if (!hit) {
 			Debug.Log ("Missed");
-
+			selectIdx = new Vector3Int (-1, -1, -1);
 			return;
 		}
 		Debug.Log(coll.x + ", " + coll.y + ", " + coll.z);
@@ -130,48 +146,88 @@ public class VoxelSpace : MonoBehaviour {
 		      && currentIdx.y >= 0 && currentIdx.y < iDims.y
 		      && currentIdx.z >= 0 && currentIdx.z < iDims.z) {
 
-			// later -- check if this is true, then return
-			voxels [currentIdx.x, currentIdx.y, currentIdx.z] = true;
+			if (voxels [currentIdx.x, currentIdx.y, currentIdx.z]) break;
 
 			if (bounds.x < bounds.y) {
 				if (bounds.x < bounds.z) {
 					currentIdx.x += step.x;
 					bounds.x += delta.x;
 
-					nor = new Vector3 (-step.x, 0, 0);
+					selectNor = new Vector3Int (-step.x, 0, 0);
 				} else {
 					currentIdx.z += step.z;
 					bounds.z += delta.z;
 
-					nor = new Vector3 (0, 0, -step.z);
+					selectNor = new Vector3Int (0, 0, -step.z);
 				}
 			} else {
 				if (bounds.y < bounds.z) {
 					currentIdx.y += step.y;
 					bounds.y += delta.y;
 
-					nor = new Vector3 (0, -step.y, 0);
+					selectNor = new Vector3Int (0, -step.y, 0);
 				} else {
 					currentIdx.z += step.z;
 					bounds.z += delta.z;
 
-					nor = new Vector3 (0, 0, -step.z);
+					selectNor = new Vector3Int (0, 0, -step.z);
 				}
 			}
+		}
+		activeSelector.transform.position = idxToPos (currentIdx);
+		activeSelector.transform.rotation = Quaternion.FromToRotation (new Vector3 (0, 0, 1), new Vector3 (selectNor.x, selectNor.y, selectNor.z));
+		selectIdx = currentIdx;
+	}
+
+	private void placeVoxel() {
+		Vector3Int loc = selectIdx + selectNor;
+		Vector3Int selectXZ = new Vector3Int (selectIdx.x, 0, selectIdx.z);
+		if (inBounds (loc) && inBounds(selectXZ)) {
+			if (voxels [loc.x, loc.y, loc.z]) return;
+
+			voxels [loc.x, loc.y, loc.z] = true;
+			Vector3 pos = idxToPos (loc);
+			GameObject v = Instantiate (phVoxel, pos, new Quaternion ()) as GameObject;
+			voxelsGO [loc.x, loc.y, loc.z] = v;
+		}
+	}
+
+	private void removeVoxel() {
+		Vector3Int loc = selectIdx;
+		if (inBounds (loc) && voxels[loc.x, loc.y, loc.z]) {
+
+			voxels [loc.x, loc.y, loc.z] = false;
+			GameObject v = voxelsGO [loc.x, loc.y, loc.z];
+			Destroy (v);
+			voxelsGO [loc.x, loc.y, loc.z] = null;
 		}
 	}
 
 	// Update is called once per frame
 	void Update () {
-		if (Input.GetMouseButtonDown (0)) {
+		if (Time.time - lastCheckTime > 0.5f)
+			mouseSelect (); // update selected area
+
+		if (Input.GetMouseButtonDown (0) || Input.GetMouseButtonDown (1)) {
 			downTime = Time.time;
 		}
 		if (Input.GetMouseButtonUp (0)) {
 			if (Time.time - downTime < 0.2f) {
-				clear ();
-				Vector3 nor = new Vector3 ();
-				leftClick (ref nor);
-				repopulate ();
+				//clear ();
+				//Vector3 nor = new Vector3 ();
+				//mouseSelect ();
+				//repopulate ();
+				placeVoxel();
+			}
+		}
+
+		if (Input.GetMouseButtonUp (1)) {
+			if (Time.time - downTime < 0.2f) {
+				//clear ();
+				//Vector3 nor = new Vector3 ();
+				//mouseSelect ();
+				//repopulate ();
+				removeVoxel();
 			}
 		}
 	}
